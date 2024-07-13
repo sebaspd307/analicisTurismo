@@ -6,6 +6,7 @@ from tqdm import tqdm
 import limpiarData
 from conexionBd import Database
 import configparser
+from datetime import datetime
 
 # Habilitar el uso de tqdm con pandas
 tqdm.pandas()
@@ -20,13 +21,15 @@ db = Database()
 ruta = r"D:\seminario\proyecto final\python-tweets_turismo_226K.csv"
 
 chunks = []
+modo_prueba_str = config['default']['modo_prueba']
+modo_prueba = modo_prueba_str.lower() == 'true'
 try:
-    if config['default']['modo_prueba']:
+    if modo_prueba:
         # Leer solo las primeras `limite_filas` filas del archivo CSV
         df_pandas = pd.read_csv(config['default']['rutaCargueArchivo'], usecols=['date', 'content'], delimiter=',', on_bad_lines='skip', encoding='utf-8', nrows=int(config['default']['limite_filas']))
     else:
         # Configurar tqdm para lectura de fragmentos
-        for chunk in tqdm(pd.read_csv(config['default']['rutaCargueArchivo'], usecols=['date', 'content'], delimiter=',', on_bad_lines='skip', encoding='utf-8', chunksize=config['default']['chunk_size']),
+        for chunk in tqdm(pd.read_csv(config['default']['rutaCargueArchivo'], usecols=['date', 'content'], delimiter=',', on_bad_lines='skip', encoding='utf-8', chunksize=int(config['default']['chunk_size'])),
                           desc="Leyendo fragmentos", bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}'):
             chunks.append(chunk)
         df_pandas = pd.concat(chunks, ignore_index=True)
@@ -65,10 +68,22 @@ try:
     sentiments = Parallel(n_jobs=-1)(delayed(analyze_sentiment_in_parallel)(text) for text in tqdm(df_pandas['cleaned_content'], desc="Analizando sentimientos"))
 
     df_pandas['sentiment'] = sentiments
+    df_pandas['date'] = df_pandas['date'].apply(lambda x: datetime.strptime(x, '%Y-%m-%d %H:%M:%S%z').strftime('%Y-%m-%d %H:%M:%S'))
     
-    
-
     print(df_pandas.head(10))  # Para verificar el resultado
+
+    # Insertar datos en la base de datos
+    for index, row in df_pandas.iterrows():
+        date = row['date']
+        cleaned_content = row['cleaned_content']
+        sentiment = row['sentiment']
+        
+        # Construir y ejecutar la consulta de inserción
+        query = "INSERT INTO TweetsSentiments (fecha, texto, sentimiento) VALUES (?, ?, ?)"
+        params = (date, cleaned_content, sentiment)
+        
+        # Ejecutar la consulta
+        db.execute_query(query, params)
 
 except pd.errors.ParserError as e:
     print(f"Error al analizar el archivo CSV: {e}")
